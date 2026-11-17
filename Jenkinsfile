@@ -47,6 +47,33 @@ pipeline {
 
     stages {
 
+        stage('Preflight0') {
+            steps {
+                sh '''
+                    echo "========== Jenkins Execution Context =========="
+
+                    whoami
+                    id
+
+                    echo "========== Docker Socket =========="
+
+                    ls -ln /var/run/docker.sock
+
+                    echo "========== Docker Connection =========="
+
+                    docker version
+
+                    echo "========== Docker Containers =========="
+
+                    docker ps
+
+                    echo "========== System Architecture =========="
+
+                    uname -m
+                '''
+            }
+        }
+
         // 1. 检查构建环境
         stage('Preflight') {
 
