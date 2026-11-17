@@ -195,7 +195,7 @@ pipeline {
                     file(
                         credentialsId: 'pentaho-maven-settings',
                         variable: 'MAVEN_SETTINGS_FILE'
-                    )
+                    ), 
                     file(
                         credentialsId: 'pentaho-maven-settings-security',
                         variable: 'MAVEN_SETTINGS_SECURITY_FILE'
@@ -248,7 +248,7 @@ pipeline {
                     file(
                         credentialsId: 'pentaho-maven-settings',
                         variable: 'MAVEN_SETTINGS_FILE'
-                    )
+                    ), 
                     file(
                         credentialsId: 'pentaho-maven-settings-security',
                         variable: 'MAVEN_SETTINGS_SECURITY_FILE'
