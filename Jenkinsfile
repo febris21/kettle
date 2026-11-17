@@ -398,14 +398,33 @@ pipeline {
         }
 
         always {
+            script {
+                if (currentBuild.currentResult == 'FAILURE') {
+                    echo 'Build failed. Keeping diagnostic information.'
 
-            sh '''
-                docker rm -f \
-                    "$KETTLE_CONTAINER" \
-                    >/dev/null 2>&1 || true
-            '''
+                    sh '''
+                        echo "========== Docker Container =========="
 
-            echo 'Builder container cleaned.'
+                        docker ps -a \
+                            --filter "name=$KETTLE_CONTAINER"
+
+                        echo "========== Container Logs =========="
+
+                        docker logs "$KETTLE_CONTAINER" 2>&1 || true
+
+                        echo "========== Container Inspection =========="
+
+                        docker inspect "$KETTLE_CONTAINER" \
+                            --format '{{.State.Status}}'
+                    '''
+                } else {
+                    sh '''
+                        docker rm -f \
+                            "$KETTLE_CONTAINER" \
+                            >/dev/null 2>&1 || true
+                    '''
+                }
+            }
         }
     }
 }
