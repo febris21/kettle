@@ -6,7 +6,9 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
+
         timeout(time: 180, unit: 'MINUTES')
+
         buildDiscarder(logRotator(
             numToKeepStr: '10',
             artifactNumToKeepStr: '10'
@@ -24,7 +26,7 @@ pipeline {
         booleanParam(
             name: 'SKIP_TESTS',
             defaultValue: true,
-            description: '跳过单元测试'
+            description: 'Skip unit tests'
         )
     }
 
@@ -50,6 +52,19 @@ pipeline {
 
             steps {
 
+                script {
+
+                    if (!params.GIT_REF.matches(
+                        '[A-Za-z0-9._/-]+'
+                    )) {
+                        error(
+                            'Invalid GIT_REF: ' +
+                            params.GIT_REF
+                        )
+                    }
+
+                }
+
                 sh '''
                     set -eu
 
@@ -64,14 +79,9 @@ pipeline {
                     echo "Checking workspace..."
 
                     df -h .
-                '''
 
-                script {
-                    if (!(params.GIT_REF ==~
-                        /[A-Za-z0-9._\\/-]+/)) {
-                        error('Invalid GIT_REF')
-                    }
-                }
+                    echo "Preflight completed."
+                '''
             }
         }
 
@@ -85,26 +95,30 @@ pipeline {
 
                     rm -rf src
 
+                    echo "Cloning Kettle source..."
+
                     git clone \
                         --depth 1 \
                         --branch "$GIT_REF" \
                         "$KETTLE_REPO" \
                         src
 
-                    echo "Source revision:"
-
                     cd src
+
+                    echo "Source revision:"
 
                     git log -1 --oneline
 
                     echo "Checking pom.xml..."
 
                     test -f pom.xml
+
+                    echo "Checkout completed."
                 '''
             }
         }
 
-        // 3. 构建专用 Docker 镜像
+        // 3. 构建 Docker Builder 镜像
         stage('Build Builder Image') {
 
             steps {
@@ -112,54 +126,81 @@ pipeline {
                 sh '''
                     set -eu
 
+                    echo "Building Docker image..."
+
                     docker build \
                         --pull \
                         -t "$BUILDER_IMAGE" \
                         .
+
+                    echo "Builder image ready."
                 '''
             }
         }
 
-        // 4. Maven 编译及打包
-        stage('Compile Kettle') {
+        // 4. 创建 Maven 缓存
+        stage('Prepare Maven Cache') {
+
+            steps {
+
+                sh '''
+                    set -eu
+
+                    echo "Creating Maven volume..."
+
+                    docker volume create \
+                        "$MAVEN_VOLUME"
+
+                    echo "Maven cache ready."
+                '''
+            }
+        }
+
+        // 5. 创建编译容器
+        stage('Create Builder Container') {
+
+            steps {
+
+                sh '''
+                    set -eu
+
+                    echo "Removing previous container..."
+
+                    docker rm -f \
+                        "$KETTLE_CONTAINER" \
+                        >/dev/null 2>&1 || true
+
+                    echo "Creating builder container..."
+
+                    docker create \
+                        --name "$KETTLE_CONTAINER" \
+                        --entrypoint /bin/bash \
+                        -v "$MAVEN_VOLUME:/root/.m2" \
+                        -w /workspace/src \
+                        "$BUILDER_IMAGE" \
+                        -lc 'mkdir -p /workspace/src && sleep infinity'
+
+                    docker start "$KETTLE_CONTAINER"
+
+                    echo "Builder container started."
+                '''
+            }
+        }
+
+        // 6. 复制源码和 Maven 配置
+        stage('Prepare Build Environment') {
 
             steps {
 
                 withCredentials([
                     file(
-                        credentialsId:
-                            'pentaho-maven-settings',
-                        variable:
-                            'MAVEN_SETTINGS_FILE'
+                        credentialsId: 'pentaho-maven-settings',
+                        variable: 'MAVEN_SETTINGS_FILE'
                     )
                 ]) {
 
                     sh '''
                         set -eu
-
-                        echo "Creating Maven cache volume..."
-
-                        docker volume create \
-                            "$MAVEN_VOLUME" \
-                            >/dev/null
-
-                        echo "Cleaning previous container..."
-
-                        docker rm -f \
-                            "$KETTLE_CONTAINER" \
-                            >/dev/null 2>&1 || true
-
-                        echo "Creating builder container..."
-
-                        docker create \
-                            --name "$KETTLE_CONTAINER" \
-                            --entrypoint /bin/bash \
-                            -v "$MAVEN_VOLUME:/root/.m2" \
-                            -w /workspace/src \
-                            "$BUILDER_IMAGE" \
-                            -lc 'mkdir -p /workspace/src && sleep infinity'
-
-                        docker start "$KETTLE_CONTAINER"
 
                         echo "Copying source code..."
 
@@ -173,40 +214,102 @@ pipeline {
                             "$MAVEN_SETTINGS_FILE" \
                             "$KETTLE_CONTAINER:/tmp/settings.xml"
 
-                        echo "Starting Maven build..."
-
-                        if [ "$SKIP_TESTS" = "true" ]; then
-
-                            docker exec \
-                                -e MAVEN_OPTS="-Xms512m -Xmx3g -Dfile.encoding=UTF-8" \
-                                "$KETTLE_CONTAINER" \
-                                bash -lc \
-                                'mvn -B -ntp clean package -DskipTests -s /tmp/settings.xml'
-
-                        else
-
-                            docker exec \
-                                -e MAVEN_OPTS="-Xms512m -Xmx3g -Dfile.encoding=UTF-8" \
-                                "$KETTLE_CONTAINER" \
-                                bash -lc \
-                                'mvn -B -ntp clean package -s /tmp/settings.xml'
-
-                        fi
-
-                        echo "Checking build output..."
+                        echo "Checking Java..."
 
                         docker exec \
                             "$KETTLE_CONTAINER" \
-                            bash -lc \
-                            'find assemblies/client/target -maxdepth 1 -type f -name "pdi-ce-*.zip" -print -quit | grep -q .'
+                            java -version
 
-                        echo "Build completed."
+                        echo "Checking Maven..."
+
+                        docker exec \
+                            "$KETTLE_CONTAINER" \
+                            mvn -version
+
+                        echo "Build environment ready."
                     '''
                 }
             }
         }
 
-        // 5. 提取构建产物
+        // 7. 编译和打包
+        stage('Compile Kettle') {
+
+            steps {
+
+                withCredentials([
+                    file(
+                        credentialsId: 'pentaho-maven-settings',
+                        variable: 'MAVEN_SETTINGS_FILE'
+                    )
+                ]) {
+
+                    script {
+
+                        def testArgs = params.SKIP_TESTS
+                            ? '-DskipTests'
+                            : ''
+
+                        withEnv([
+                            "MAVEN_TEST_ARGS=${testArgs}"
+                        ]) {
+
+                            sh '''
+                                set -eu
+
+                                echo "Starting Kettle build..."
+
+                                docker exec \
+                                    -e MAVEN_OPTS="-Xms512m -Xmx3g -Dfile.encoding=UTF-8" \
+                                    -e MAVEN_TEST_ARGS="$MAVEN_TEST_ARGS" \
+                                    "$KETTLE_CONTAINER" \
+                                    bash -lc '
+                                        set -e
+
+                                        mvn \
+                                            -B \
+                                            -ntp \
+                                            clean \
+                                            package \
+                                            $MAVEN_TEST_ARGS \
+                                            -s /tmp/settings.xml
+                                    '
+
+                                echo "Kettle build completed."
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // 8. 检查构建结果
+        stage('Verify Build') {
+
+            steps {
+
+                sh '''
+                    set -eu
+
+                    echo "Checking Kettle package..."
+
+                    docker exec \
+                        "$KETTLE_CONTAINER" \
+                        bash -lc '
+                            find assemblies/client/target \
+                                -maxdepth 1 \
+                                -type f \
+                                -name "pdi-ce-*.zip" \
+                                -print \
+                                -quit | grep -q .
+                        '
+
+                    echo "Kettle package found."
+                '''
+            }
+        }
+
+        // 9. 收集编译产物
         stage('Collect Artifacts') {
 
             steps {
@@ -214,13 +317,15 @@ pipeline {
                 sh '''
                     set -eu
 
+                    rm -rf dist
+
                     mkdir -p dist
+
+                    echo "Copying build artifacts..."
 
                     docker cp \
                         "$KETTLE_CONTAINER:/workspace/src/assemblies/client/target/." \
                         dist/
-
-                    echo "Checking ZIP files..."
 
                     FOUND=0
 
@@ -228,17 +333,20 @@ pipeline {
 
                         [ -f "$f" ] || continue
 
+                        echo "Validating $f"
+
                         unzip -t "$f" >/dev/null
 
                         FOUND=1
 
-                        echo "Validated: $f"
-
                     done
 
                     if [ "$FOUND" -ne 1 ]; then
-                        echo "No valid Kettle ZIP found!"
+
+                        echo "ERROR: No valid Kettle ZIP found!"
+
                         exit 1
+
                     fi
 
                     cd dist
@@ -248,11 +356,13 @@ pipeline {
                     echo "Final artifacts:"
 
                     ls -lh
+
+                    echo "Artifact collection completed."
                 '''
             }
         }
 
-        // 6. Jenkins 归档
+        // 10. Jenkins 归档
         stage('Archive') {
 
             steps {
@@ -272,7 +382,7 @@ pipeline {
 
             echo '''
             ====================================
-            KETTLE BUILD SUCCESS
+            KETTLE 9.4 BUILD SUCCESS
             ====================================
             '''
         }
@@ -281,7 +391,7 @@ pipeline {
 
             echo '''
             ====================================
-            KETTLE BUILD FAILED
+            KETTLE 9.4 BUILD FAILED
             Please check Maven build logs.
             ====================================
             '''
