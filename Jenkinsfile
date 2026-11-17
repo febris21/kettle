@@ -196,6 +196,10 @@ pipeline {
                         credentialsId: 'pentaho-maven-settings',
                         variable: 'MAVEN_SETTINGS_FILE'
                     )
+                    file(
+                        credentialsId: 'pentaho-maven-settings-security',
+                        variable: 'MAVEN_SETTINGS_SECURITY_FILE'
+                    )                    
                 ]) {
 
                     sh '''
@@ -212,6 +216,10 @@ pipeline {
                         docker cp \
                             "$MAVEN_SETTINGS_FILE" \
                             "$KETTLE_CONTAINER:/tmp/settings.xml"
+                        
+                        docker cp \
+                            "$MAVEN_SETTINGS_SECURITY_FILE" \
+                            "$KETTLE_CONTAINER:/tmp/settings-security.xml"
 
                         echo "Checking Java..."
 
@@ -241,6 +249,10 @@ pipeline {
                         credentialsId: 'pentaho-maven-settings',
                         variable: 'MAVEN_SETTINGS_FILE'
                     )
+                    file(
+                        credentialsId: 'pentaho-maven-settings-security',
+                        variable: 'MAVEN_SETTINGS_SECURITY_FILE'
+                    ) 
                 ]) {
 
                     script {
@@ -271,7 +283,8 @@ pipeline {
                                             clean \
                                             package \
                                             $MAVEN_TEST_ARGS \
-                                            -s /tmp/settings.xml
+                                            -s /tmp/settings.xml \
+                                            -s /tmp/settings-security.xml
                                     '
 
                                 echo "Kettle build completed."
