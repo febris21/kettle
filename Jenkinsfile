@@ -219,7 +219,7 @@ pipeline {
                         
                         docker cp \
                             "$MAVEN_SETTINGS_SECURITY_FILE" \
-                            "$KETTLE_CONTAINER:/tmp/settings-security.xml"
+                            "$KETTLE_CONTAINER:~/.m2/settings-security.xml"
 
                         echo "Checking Java..."
 
@@ -283,8 +283,7 @@ pipeline {
                                             clean \
                                             package \
                                             $MAVEN_TEST_ARGS \
-                                            -s /tmp/settings.xml \
-                                            -s /tmp/settings-security.xml
+                                            -s /tmp/settings.xml 
                                     '
 
                                 echo "Kettle build completed."
