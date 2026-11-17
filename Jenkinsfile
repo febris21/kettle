@@ -215,7 +215,7 @@ pipeline {
 
                         docker cp \
                             "$MAVEN_SETTINGS_FILE" \
-                            "$KETTLE_CONTAINER:/tmp/settings.xml"
+                            "$KETTLE_CONTAINER:/root/.m2/settings.xml"
                         
                         docker cp \
                             "$MAVEN_SETTINGS_SECURITY_FILE" \
@@ -282,8 +282,7 @@ pipeline {
                                             -ntp \
                                             clean \
                                             package \
-                                            $MAVEN_TEST_ARGS \
-                                            -s /tmp/settings.xml 
+                                            $MAVEN_TEST_ARGS 
                                     '
 
                                 echo "Kettle build completed."
