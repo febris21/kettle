@@ -219,7 +219,7 @@ pipeline {
                         
                         docker cp \
                             "$MAVEN_SETTINGS_SECURITY_FILE" \
-                            "$KETTLE_CONTAINER:~/.m2/settings-security.xml"
+                            "$KETTLE_CONTAINER:/root/.m2/settings-security.xml"
 
                         echo "Checking Java..."
 
