@@ -1,30 +1,56 @@
 
-# Kettle 9.4 专用编译环境
-FROM maven:3.8.8-eclipse-temurin-11
+FROM eclipse-temurin:11-jre-jammy
 
-LABEL maintainer="Jenkins"
-LABEL description="Pentaho Kettle 9.4 Build Environment"
+ENV PDI_HOME=/opt/kettle/data-integration \
+    KETTLE_HOME=/opt/kettle/.kettle \
+    TZ=Asia/Shanghai \
+    PENTAHO_DI_JAVA_OPTIONS="-Xms512m -Xmx2048m -Duser.timezone=Asia/Shanghai"
 
-ENV TZ=UTC
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      unzip \
+      curl \
+      ca-certificates \
+      tzdata && \
+    rm -rf /var/lib/apt/lists/*
 
-# 安装基础工具
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates \
-       git \
-       unzip \
-       zip \
-       bash \
-    && rm -rf /var/lib/apt/lists/*
+RUN groupadd -g 1000 kettle && \
+    useradd -m -u 1000 -g kettle -s /bin/bash kettle && \
+    mkdir -p \
+      /opt/kettle/.kettle \
+      /opt/kettle/jobs \
+      /opt/kettle/transformations \
+      /opt/kettle/drivers \
+      /opt/kettle/logs
 
-# Maven 本地仓库
-ENV MAVEN_CONFIG=/root/.m2
+COPY pdi-ce-9.4.0.0-343.zip /tmp/pdi.zip
 
-# 默认 JVM 参数
-ENV MAVEN_OPTS="-Xms512m -Xmx3g -Dfile.encoding=UTF-8"
+RUN unzip -q /tmp/pdi.zip -d /opt/kettle && \
+    test -f /opt/kettle/data-integration/carte.sh && \
+    test -f /opt/kettle/data-integration/pan.sh && \
+    test -f /opt/kettle/data-integration/kitchen.sh && \
+    chmod +x /opt/kettle/data-integration/*.sh && \
+    rm -f /tmp/pdi.zip
 
-WORKDIR /workspace
+COPY carte-config.xml /opt/kettle/carte-config.xml
+COPY kettle.properties /opt/kettle/.kettle/kettle.properties
+COPY kettle.pwd /opt/kettle/.kettle/kettle.pwd
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-CMD ["/bin/bash"]
+# JDBC驱动目录中的JAR复制到PDI lib
+COPY drivers/ /opt/kettle/data-integration/lib/
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    chmod 600 /opt/kettle/.kettle/kettle.pwd && \
+    chown -R kettle:kettle /opt/kettle && \
+    chmod 755 /opt/kettle/data-integration/*.sh
+
+ENV PATH="/opt/kettle/data-integration:${PATH}"
+
+WORKDIR /opt/kettle/data-integration
+
+EXPOSE 8080
+
+USER kettle
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
